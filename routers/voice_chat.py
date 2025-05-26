@@ -97,6 +97,10 @@ async def voice_chat_endpoint(websocket: WebSocket, conversation_id: str, user_i
                         # 如果是最后一段音频，停止录音
                         if data['type'] == 'audio_end':
                             await voice_chat.recognition.stop()
+                    elif data['type'] == 'recognition':
+                        # 处理最终识别文本
+                        if data.get('is_final', False):
+                            await voice_chat.handle_chat_response(data['text'])
                     else:
                         logger.warning(f"收到未知类型的消息: {data['type']}")
                         

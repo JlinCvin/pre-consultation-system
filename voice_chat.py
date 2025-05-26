@@ -146,28 +146,13 @@ class VoiceChat(RecognitionCallback):
             print(sentence)
             if 'text' in sentence:
                 text = sentence['text']
-                is_final = sentence.get('sentence_end', False) # 获取 is_final 标志，默认为 False
+                is_final = sentence.get('sentence_end', False)
 
-                if text != self.current_text or is_final: # 只有当文本发生变化或结果是最终结果时才更新
+                if text != self.current_text or is_final:
                     logger.info(f'识别结果: {text} (最终结果: {is_final})')
                     self.last_text_time = time.time()
                     self.current_text = text  # 更新当前文本
                     self.user_speaking = True  # 标记用户正在说话
-
-                    # 如果正在等待AI回复，取消当前任务
-                    if self.is_ai_responding and self.ai_response_task:
-                        self.ai_response_task.cancel()
-                        self.is_ai_responding = False
-                        logger.info("检测到用户继续说话，取消当前AI回复任务")
-
-                        # 如果不是最终结果，暂存文本；如果是最终结果，直接处理
-                        if not is_final:
-                             if self.pending_user_text:
-                                self.pending_user_text = self.pending_user_text + " " + text
-                             else:
-                                self.pending_user_text = text
-                             logger.info(f"暂存未处理的文本: {self.pending_user_text}")
-
 
                     # 使用异步方式发送消息
                     if self.is_websocket_connected():
@@ -183,7 +168,7 @@ class VoiceChat(RecognitionCallback):
                                         await self.websocket.send_text(json.dumps({
                                             'type': 'recognition',
                                             'text': text,
-                                            'is_final': is_final # 添加 is_final 标志
+                                            'is_final': is_final
                                         }))
                                 except asyncio.TimeoutError:
                                     logger.warning("发送识别结果超时")
@@ -257,64 +242,15 @@ class VoiceChat(RecognitionCallback):
                 # 更新用户说话状态
                 self.user_speaking = True
                 
-                # 处理识别结果
-                await self.process_recognition_result(result)
+                # 只更新状态，不处理文本
+                self.current_text = result.text
+                self.last_text_time = time.time()
                 
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error(f"处理语音识别队列时出错: {e}")
                 continue
-
-    async def process_recognition_result(self, result):
-        """处理单个语音识别结果"""
-        try:
-            # 更新当前文本
-            self.current_text = result.text
-            self.last_text_time = time.time()
-            
-            # 将文本添加到待处理队列
-            self.pending_user_text += result.text
-            
-            # 如果AI正在回复，取消当前的AI回复任务
-            if self.is_ai_responding and self.ai_response_task:
-                self.ai_response_task.cancel()
-                self.is_ai_responding = False
-                logger.info("检测到新的语音输入，取消当前AI回复任务")
-            
-            # 立即处理文本
-            await self.process_user_text()
-                
-        except Exception as e:
-            logger.error(f"处理语音识别结果时出错: {e}")
-
-    async def process_user_text(self):
-        """处理用户输入的文本"""
-        if not self.pending_user_text:
-            return
-            
-        try:
-            # 设置AI回复状态
-            self.is_ai_responding = True
-            
-            # 获取AI回复
-            response = await self.get_ai_response(self.pending_user_text)
-            
-            # 清空待处理文本
-            self.pending_user_text = ""
-            
-            # 发送AI回复
-            if self.websocket:
-                await self.websocket.send_json({
-                    "type": "ai_response",
-                    "text": response
-                })
-                
-        except Exception as e:
-            logger.error(f"处理用户文本时出错: {e}")
-        finally:
-            # 重置AI回复状态
-            self.is_ai_responding = False
 
     async def process_recognition_results(self):
         """处理语音识别结果的协程"""
@@ -324,7 +260,9 @@ class VoiceChat(RecognitionCallback):
                 try:
                     text = self.text_queue.get_nowait()
                     if text:
-                        await self.handle_chat_response(text)
+                        # 只更新状态，不处理文本
+                        self.current_text = text
+                        self.last_text_time = time.time()
                 except queue.Empty:
                     pass
                 await asyncio.sleep(0.1)

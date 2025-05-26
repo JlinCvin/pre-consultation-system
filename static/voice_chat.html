@@ -7,6 +7,7 @@
         content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>语音对话 - AI 病历</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <style>
         :root {
             --primary-color: #4a90e2;
@@ -267,6 +268,96 @@
             word-break: break-word;
         }
 
+        .thinking-message {
+            align-self: flex-start;
+            background-color: #e3f2fd;
+            color: #1976d2;
+            border-radius: 18px 18px 6px 18px;
+            padding: 12px 20px;
+            margin-bottom: 24px;
+            font-size: 15px;
+            font-style: italic;
+            display: flex;
+            align-items: center;
+            min-width: 100px;
+            box-shadow: 0 1px 2px rgba(25, 118, 210, 0.08);
+            position: relative;
+        }
+
+        .thinking-message .thinking-dots {
+            display: inline-block;
+            margin-left: 8px;
+            vertical-align: middle;
+        }
+
+        .thinking-message .thinking-dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            margin: 0 2px;
+            background: #90caf9;
+            border-radius: 50%;
+            animation: thinking-bounce 1.2s infinite both;
+        }
+
+        .thinking-message .thinking-dot:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+
+        .thinking-message .thinking-dot:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+
+        @keyframes thinking-bounce {
+            0%, 80%, 100% {
+                transform: translateY(0);
+            }
+            40% {
+                transform: translateY(-8px);
+            }
+        }
+
+        .tool-output {
+            background-color: #e8f5e9;
+            border-left: 4px solid #4caf50;
+            padding: 12px 16px;
+            margin: 8px 0;
+            border-radius: 8px;
+            font-size: 14px;
+            color: #2e7d32;
+        }
+
+        .tool-output-title {
+            font-weight: 600;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            cursor: pointer;
+        }
+
+        .tool-output-title i {
+            color: #4caf50;
+        }
+
+        .tool-output-content {
+            line-height: 1.5;
+            display: none;
+            margin-top: 8px;
+        }
+
+        .tool-output.expanded .tool-output-content {
+            display: block;
+        }
+
+        .tool-output-title .toggle-icon {
+            transition: transform 0.3s ease;
+        }
+
+        .tool-output.expanded .tool-output-title .toggle-icon {
+            transform: rotate(180deg);
+        }
+
         @media (prefers-color-scheme: dark) {
             :root {
                 --text-color: #e0e0e0;
@@ -296,6 +387,29 @@
             .voice-controls {
                 background-color: #1a1a1a;
                 border-top-color: rgba(255, 255, 255, 0.1);
+            }
+
+            .tool-output {
+                background-color: #1b5e20;
+                border-left-color: #81c784;
+                color: #a5d6a7;
+            }
+
+            .tool-output-title {
+                color: #81c784;
+            }
+
+            .tool-output-title i {
+                color: #81c784;
+            }
+
+            .thinking-message {
+                background-color: #1a237e;
+                color: #90caf9;
+            }
+
+            .thinking-message .thinking-dot {
+                background: #64b5f6;
             }
         }
     </style>
@@ -359,14 +473,11 @@
         let currentAudioSource = null;
         let shouldSendToAgent = false;
         let accumulatedText = "";
+        let currentAiMessageElement = null;
 
         // 页面加载时初始化 conversationId
         document.addEventListener('DOMContentLoaded', () => {
-            currentConversationId = localStorage.getItem('voiceChatConversationId');
-            if (!currentConversationId) {
-                currentConversationId = uuidv4();
-                localStorage.setItem('voiceChatConversationId', currentConversationId);
-            }
+            currentConversationId = uuidv4();
             console.log('当前会话ID:', currentConversationId);
         });
 
@@ -379,37 +490,74 @@
         }
 
         // 添加消息到聊天界面
-        function addMessage(text, sender) {
-            const lastMessage = chatMessages.lastElementChild;
-            if (lastMessage &&
-                lastMessage.classList.contains(sender === 'user' ? 'user-message' : 'ai-message')) {
-
-                const lastTime = lastMessage.querySelector('.message-time').textContent;
-                const currentTime = getCurrentTime();
-
-                if (isWithinOneMinute(lastTime, currentTime)) {
-                    const contentDiv = lastMessage.querySelector('.message-content');
-                    contentDiv.textContent = contentDiv.textContent + '\n' + text;
-                    return lastMessage;
-                }
-            }
-
+        function addMessage(text, sender, type = 'normal') {
             const messageDiv = document.createElement('div');
             messageDiv.classList.add('message');
             messageDiv.classList.add(sender === 'user' ? 'user-message' : 'ai-message');
 
+            if (type === 'thinking') {
+                messageDiv.classList.remove('message');
+                messageDiv.classList.add('thinking-message');
+                messageDiv.innerHTML = '正在思考<span class="thinking-dots"><span class="thinking-dot"></span><span class="thinking-dot"></span><span class="thinking-dot"></span></span>';
+            } else if (type === 'error') {
+                messageDiv.classList.add('error-message');
+            }
+
+            // 创建消息内容容器
             const contentDiv = document.createElement('div');
             contentDiv.classList.add('message-content');
-            contentDiv.textContent = text;
-            messageDiv.appendChild(contentDiv);
 
+            // 处理工具输出
+            if (type === 'tool') {
+                const toolOutputDiv = document.createElement('div');
+                toolOutputDiv.classList.add('tool-output');
+                
+                const titleDiv = document.createElement('div');
+                titleDiv.classList.add('tool-output-title');
+                titleDiv.innerHTML = `
+                    <div>
+                        <i class="fas fa-cog"></i>工具执行结果
+                    </div>
+                    <i class="fas fa-chevron-down toggle-icon"></i>
+                `;
+                
+                const contentDiv = document.createElement('div');
+                contentDiv.classList.add('tool-output-content');
+                contentDiv.innerHTML = marked.parse(text);
+                
+                toolOutputDiv.appendChild(titleDiv);
+                toolOutputDiv.appendChild(contentDiv);
+                
+                // 添加点击事件处理
+                titleDiv.addEventListener('click', () => {
+                    toolOutputDiv.classList.toggle('expanded');
+                });
+                
+                messageDiv.appendChild(toolOutputDiv);
+            } else {
+                // 处理普通消息
+                if (type !== 'thinking' && sender === 'ai') {
+                    contentDiv.innerHTML = marked.parse(text);
+                } else {
+                    contentDiv.textContent = text;
+                }
+                messageDiv.appendChild(contentDiv);
+            }
+
+            // 添加时间
             const timeDiv = document.createElement('div');
             timeDiv.classList.add('message-time');
             timeDiv.textContent = getCurrentTime();
             messageDiv.appendChild(timeDiv);
 
+            // 添加到聊天区域
             chatMessages.appendChild(messageDiv);
-            scrollToBottom();
+
+            // 平滑滚动到底部
+            chatMessages.scrollTo({
+                top: chatMessages.scrollHeight,
+                behavior: 'smooth'
+            });
 
             return messageDiv;
         }
@@ -431,36 +579,23 @@
 
             if (text) {
                 if (is_final) {
-                    accumulatedText = text;
+                    // 如果已经有累积的文本，且最后一个字符不是标点符号，则添加标点
+                    if (accumulatedText && !/[，。？！,.!?]$/.test(accumulatedText)) {
+                        accumulatedText += '，';
+                    }
+                    // 将最终识别的文本追加到累积文本中
+                    accumulatedText += text;
                     recognitionTextElement.textContent = accumulatedText;
                     recognitionTextElement.classList.add('active');
                     statusText.textContent = '松开发送';
-
                 } else {
-                    let overlap = 0;
-                    const minLength = Math.min(accumulatedText.length, text.length);
-                    for (let i = 1; i <= minLength; i++) {
-                        if (accumulatedText.substring(accumulatedText.length - i) === text.substring(0, i)) {
-                            overlap = i;
-                        } else {
-                            break;
-                        }
-                    }
-
-                    if (text.startsWith(accumulatedText)) {
-                        accumulatedText = text;
-                    } else if (overlap > 0) {
-                        let prefix = accumulatedText.substring(0, accumulatedText.length - overlap);
-                        let suffix = text.substring(overlap);
-                        accumulatedText = prefix + suffix;
-
-                    } else if (accumulatedText && !/[，。？！,.!?]$/.test(accumulatedText)){
-                        accumulatedText += '，' + text;
+                    // 非最终结果时，直接替换当前正在识别的文本
+                    // 如果已经有累积的文本，则显示累积文本 + 当前识别文本
+                    if (accumulatedText) {
+                        recognitionTextElement.textContent = accumulatedText + text;
                     } else {
-                        accumulatedText += text;
+                        recognitionTextElement.textContent = text;
                     }
-
-                    recognitionTextElement.textContent = accumulatedText;
                     recognitionTextElement.classList.add('active');
                     statusText.textContent = '正在识别...';
                 }
@@ -529,12 +664,7 @@
         }
 
         function getConversationId() {
-            let conversationId = localStorage.getItem('voiceChatConversationId');
-            if (!conversationId) {
-                conversationId = uuidv4();
-                localStorage.setItem('voiceChatConversationId', conversationId);
-            }
-            return conversationId;
+            return currentConversationId;
         }
 
         async function startVoiceChat() {
@@ -620,21 +750,23 @@
 
                                 switch (response.type) {
                                     case 'response':
+                                    case 'response_token':
                                         if (recognitionText.style.display === 'block') {
                                             updateRecognitionText('');
                                         }
-                                        addMessage(response.text, 'ai');
-                                        statusText.textContent = '按住说话';
+                                        if (!currentAiMessageElement) {
+                                            currentAiMessageElement = addMessage("", "ai");
+                                        }
+                                        currentAiMessageElement.querySelector('.message-content').textContent += response.text;
+                                        scrollToBottom();
+                                        statusText.textContent = 'AI正在回复...';
                                         isAiResponding = true;
-                                        console.log('AI回复:', response.text);
+                                        console.log('AI回复片段:', response.text);
                                         break;
 
                                     case 'recognition':
                                         if (response.is_final) {
                                             if (shouldSendToAgent) {
-                                                addMessage(accumulatedText, 'user');
-                                                updateRecognitionText('');
-                                                statusText.textContent = '正在等待AI回复...';
                                                 console.log('最终识别结果:', accumulatedText);
                                             } else {
                                                 updateRecognitionText(response);
@@ -650,6 +782,7 @@
                                     case 'tool_start':
                                         console.log('工具调用开始:', response.name);
                                         statusText.textContent = `正在使用工具: ${response.name}`;
+                                        currentAiMessageElement = null;
                                         break;
 
                                     case 'tool_chunk':
@@ -658,7 +791,9 @@
 
                                     case 'tool_output':
                                         console.log('工具输出:', response.text);
+                                        addMessage(response.text, 'ai', 'tool');
                                         statusText.textContent = '正在处理工具输出...';
+                                        currentAiMessageElement = null;
                                         break;
 
                                     case 'tool_progress':
@@ -670,23 +805,27 @@
 
                                     case 'end':
                                         console.log('对话结束');
-                                        statusText.textContent = '点击开始语音对话';
+                                        statusText.textContent = '按住说话';
                                         isAiResponding = false;
+                                        currentAiMessageElement = null;
                                         break;
 
                                     case 'error':
                                         showError(response.message);
                                         statusText.textContent = '发生错误';
                                         isAiResponding = false;
+                                        currentAiMessageElement = null;
                                         console.error('错误:', response.message);
                                         break;
 
                                     default:
                                         console.warn('未知消息类型:', response.type);
+                                        currentAiMessageElement = null;
                                 }
                             } catch (error) {
                                 console.error('解析消息失败:', error, event.data);
                                 showError('解析消息失败');
+                                currentAiMessageElement = null;
                             }
                         }
                     };
