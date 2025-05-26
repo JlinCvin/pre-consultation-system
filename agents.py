@@ -22,6 +22,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import START, MessagesState, StateGraph
 from db import save_conversation, load_conversation  # 修改为正确的函数名
 from langgraph.config import get_stream_writer  # <- 新增：用于工具内部流式写入
+from langchain.memory import ConversationBufferMemory
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.WARNING)  # 设置默认日志级别为WARNING
@@ -34,47 +35,71 @@ logger.setLevel(logging.WARNING)  # 设置默认日志级别为WARNING
 class UpdatePatientInfoInput(BaseModel):
     """更新患者信息的输入模型"""
     # 基本信息
-    name: Optional[str] = Field(None, description="患者姓名")
-    age: Optional[int] = Field(None, description="患者年龄")
-    gender: Optional[str] = Field(None, description="患者性别")
-    occupation: Optional[str] = Field(None, description="职业")
-    phone: Optional[str] = Field(None, description="联系电话")
-    address: Optional[str] = Field(None, description="住址")
+    name: Optional[str] = Field(None, description="患者姓名", examples=["张三"])
+    age: Optional[int] = Field(None, description="患者年龄", examples=[25])
+    gender: Optional[str] = Field(None, description="患者性别", examples=["男", "女"])
+    occupation: Optional[str] = Field(None, description="职业", examples=["教师", "工程师"])
+    phone: Optional[str] = Field(None, description="联系电话", examples=["13800138000"])
+    address: Optional[str] = Field(None, description="住址", examples=["北京市海淀区中关村大街1号"])
 
     # 就诊信息
-    department: Optional[str] = Field(None, description="就诊科室")
-    visit_time: Optional[str] = Field(None, description="就诊时间")
-    chief_complaint: Optional[str] = Field(None, description="主诉")
+    department: Optional[str] = Field(None, description="就诊科室", examples=["内科", "外科"])
+    visit_time: Optional[str] = Field(None, description="就诊时间", examples=["2024-03-20 14:30"])
+    chief_complaint: Optional[str] = Field(None, description="主诉", examples=["发热3天，咳嗽2天"])
 
     # 症状和病史
-    symptoms: Optional[List[str]] = Field(None, description="症状列表")
-    medical_history: Optional[str] = Field(None, description="既往病史")
-    last_diagnosis: Optional[str] = Field(None, description="最后诊断")
-    current_illness: Optional[str] = Field(None, description="现病史")
-    family_history: Optional[str] = Field(None, description="家族史")
-    allergy_history: Optional[str] = Field(None, description="过敏史")
-    personal_history: Optional[str] = Field(None, description="个人史")
+    symptoms: Optional[List[str]] = Field(None, description="症状列表", examples=[["发热", "咳嗽", "头痛"]])
+    medical_history: Optional[str] = Field(None, description="既往病史", examples=["高血压病史5年"])
+    last_diagnosis: Optional[str] = Field(None, description="最后诊断", examples=["上呼吸道感染"])
+    current_illness: Optional[str] = Field(None, description="现病史", examples=["3天前开始发热，最高体温38.5℃"])
+    family_history: Optional[str] = Field(None, description="家族史", examples=["父亲有高血压病史"])
+    allergy_history: Optional[str] = Field(None, description="过敏史", examples=["对青霉素过敏"])
+    personal_history: Optional[str] = Field(None, description="个人史", examples=["无特殊"])
 
     # 体格检查
-    physical_exam: Optional[str] = Field(None, description="体格检查")
-    auxiliary_exam: Optional[str] = Field(None, description="辅助检查")
-    treatment_plan: Optional[str] = Field(None, description="治疗计划")
+    physical_exam: Optional[str] = Field(None, description="体格检查", examples=["体温38.2℃，咽部充血"])
+    auxiliary_exam: Optional[str] = Field(None, description="辅助检查", examples=["血常规：白细胞12.5×10^9/L"])
+    treatment_plan: Optional[str] = Field(None, description="治疗计划", examples=["口服布洛芬退热，多饮水"])
 
     # 生活习惯
-    smoking_history: Optional[Dict[str, str]] = Field(None, description="吸烟史，包含status(状态)、amount(量)、years(年限)")
-    alcohol_history: Optional[Dict[str, str]] = Field(None, description="饮酒史，包含status(状态)、frequency(频率)、type(类型)")
+    smoking_history: Optional[Dict[str, str]] = Field(
+        None, 
+        description="吸烟史，包含status(状态)、amount(量)、years(年限)",
+        examples=[{"status": "已戒烟", "amount": "20支/天", "years": "10年"}]
+    )
+    alcohol_history: Optional[Dict[str, str]] = Field(
+        None, 
+        description="饮酒史，包含status(状态)、frequency(频率)、type(类型)",
+        examples=[{"status": "偶尔", "frequency": "每周1-2次", "type": "啤酒"}]
+    )
 
     # 女性特有信息
-    menstrual_history: Optional[Dict[str, str]] = Field(None, description="月经史，包含menarche_age(初潮年龄)、last_menstrual_age(末次月经年龄)等")
+    menstrual_history: Optional[Dict[str, str]] = Field(
+        None, 
+        description="月经史，包含menarche_age(初潮年龄)、last_menstrual_age(末次月经年龄)等",
+        examples=[{"menarche_age": "13岁", "last_menstrual_age": "28天前"}]
+    )
 
     # 生育史
-    fertility_history: Optional[Dict[str, str]] = Field(None, description="生育史，包含pregnancy_times(妊娠次数)、delivery_times(分娩次数)等")
+    fertility_history: Optional[Dict[str, str]] = Field(
+        None, 
+        description="生育史，包含pregnancy_times(妊娠次数)、delivery_times(分娩次数)等",
+        examples=[{"pregnancy_times": "2次", "delivery_times": "1次"}]
+    )
 
     # 婚姻史
-    marriage_history: Optional[Dict[str, str]] = Field(None, description="婚姻史，包含status(状态)、marriage_age(结婚年龄)、spouse_health(配偶健康状况)")
+    marriage_history: Optional[Dict[str, str]] = Field(
+        None, 
+        description="婚姻史，包含status(状态)、marriage_age(结婚年龄)、spouse_health(配偶健康状况)",
+        examples=[{"status": "已婚", "marriage_age": "25岁", "spouse_health": "健康"}]
+    )
 
     # 体格数据
-    physical_data: Optional[Dict[str, str]] = Field(None, description="体格数据，包含temperature(体温)、respiration(呼吸)等")
+    physical_data: Optional[Dict[str, str]] = Field(
+        None, 
+        description="体格数据，包含temperature(体温)、respiration(呼吸)等",
+        examples=[{"temperature": "37.2℃", "respiration": "20次/分", "pulse": "80次/分", "blood_pressure": "120/80mmHg"}]
+    )
 
 
 class GenerateMedicalRecordInput(BaseModel):
@@ -132,11 +157,24 @@ class NurseAgentGraph:
         self.conversation_id = conversation_id
         self.user_id = "default_user"  # 默认用户ID
 
+        # 初始化对话记忆
+        self.memory = ConversationBufferMemory(
+            memory_key="chat_history",
+            return_messages=True,
+            output_key="output"
+        )
+
         # 加载患者信息
         try:
             if conversation_id:
                 patient_info, messages, image_urls, _, _ = load_conversation(conversation_id)
                 self.patient_info = patient_info if patient_info else UserInfo()
+                # 加载历史消息到记忆
+                for msg in messages:
+                    if msg.role == "user":
+                        self.memory.chat_memory.add_user_message(msg.content)
+                    else:
+                        self.memory.chat_memory.add_ai_message(msg.content)
             else:
                 self.patient_info = UserInfo()
         except Exception:
@@ -156,11 +194,11 @@ class NurseAgentGraph:
         self.workflow = StateGraph(state_schema=MessagesState)
         self.workflow.add_node("model", self.call_model)
         self.workflow.add_edge(START, "model")
-        self.memory = MemorySaver()
+        self.memory_saver = MemorySaver()
         if conversation_id:
-            self.app = self.workflow.compile(checkpointer=self.memory, name=f"nurse_agent_{conversation_id}")
+            self.app = self.workflow.compile(checkpointer=self.memory_saver, name=f"nurse_agent_{conversation_id}")
         else:
-            self.app = self.workflow.compile(checkpointer=self.memory)
+            self.app = self.workflow.compile(checkpointer=self.memory_saver)
 
         logger.debug(f"NurseAgentGraph 初始化完成，conversation_id: {conversation_id}")
 
@@ -208,6 +246,21 @@ class NurseAgentGraph:
             update_info = {k: v for k, v in kwargs.items() if v is not None}
             if not update_info:
                 return "没有提供任何需要更新的信息"
+
+            # 验证输入数据
+            validation_errors = []
+            for key, value in update_info.items():
+                if key == "age" and not isinstance(value, int):
+                    validation_errors.append(f"年龄必须是整数，当前值: {value}")
+                elif key == "symptoms" and not isinstance(value, list):
+                    validation_errors.append(f"症状必须是列表，当前值: {value}")
+                elif key in ["smoking_history", "alcohol_history", "menstrual_history", 
+                           "fertility_history", "marriage_history", "physical_data"]:
+                    if not isinstance(value, dict):
+                        validation_errors.append(f"{key}必须是字典类型，当前值: {value}")
+
+            if validation_errors:
+                return "输入数据验证失败：\n" + "\n".join(validation_errors)
 
             # 2. 创建患者信息副本并更新
             try:
@@ -266,7 +319,17 @@ class NurseAgentGraph:
             StructuredTool(
                 name="update_patient_info",
                 func=self.update_patient_info_tool,
-                description="更新患者信息。",
+                description="""更新患者信息。此工具用于记录和更新患者的所有相关信息，包括：
+1. 基本信息（姓名、年龄、性别等）
+2. 就诊信息（科室、时间、主诉等）
+3. 症状和病史（症状列表、既往病史等）
+4. 体格检查（检查结果、辅助检查等）
+5. 生活习惯（吸烟史、饮酒史等）
+6. 女性特有信息（月经史等）
+7. 生育史和婚姻史
+8. 体格数据（体温、呼吸等）
+
+所有字段都是可选的，只需要提供需要更新的信息即可。""",
                 args_schema=UpdatePatientInfoInput,
                 coroutine=self.update_patient_info_tool,
                 async_callable=True,
@@ -280,8 +343,17 @@ class NurseAgentGraph:
 1. 每当患者提供任何新的信息时，必须立即调用 update_patient_info 工具进行更新
 2. 更新患者信息是最高优先级的任务，必须在其他操作之前完成
 3. 即使患者只提供了一条信息，也要立即调用 update_patient_info 工具更新
-4. 在生成病历时，必须先确保所有患者信息都已更新，再调用 generate_medical_record 工具
+4. 只有患者提出生成病历时，再调用 generate_medical_record 工具
 5. 如果发现患者信息有任何变化，必须立即调用 update_patient_info 工具更新
+
+主动采集信息指南：
+1. 首次对话时，主动询问患者的基本信息（姓名、年龄、性别等）
+2. 根据患者的主诉，主动询问相关的症状和病史
+3. 对于女性患者，适时询问月经史和生育史
+4. 询问患者的生活习惯（吸烟、饮酒等）
+5. 询问家族史和过敏史
+6. 记录体格检查结果和辅助检查结果
+7. 根据病情需要，主动询问其他相关信息
 
 请严格按照以上规则操作，确保患者信息的实时性和准确性。"""),
             MessagesPlaceholder(variable_name="chat_history"),
@@ -293,10 +365,8 @@ class NurseAgentGraph:
         agent_executor = AgentExecutor(
             agent=agent,
             tools=tools,
+            memory=self.memory,
             verbose=True,
-            callbacks=[self.callback],
-            return_intermediate_steps=True,
-            handle_tool_errors=True,
         )
 
         # 用 agent_executor 直接返回 AIMessage，交给 LangGraph
@@ -329,7 +399,7 @@ class NurseAgentGraph:
             StructuredTool(
                 name="generate_medical_record",
                 func=self.generate_medical_record_tool,
-                description="生成患者的病历记录。",
+                description="""生成患者的病历记录。此工具会使用当前会话中收集到的所有患者信息。""",
                 args_schema=GenerateMedicalRecordInput,
                 coroutine=self.generate_medical_record_tool,
                 async_callable=True,
@@ -337,7 +407,17 @@ class NurseAgentGraph:
             StructuredTool(
                 name="update_patient_info",
                 func=self.update_patient_info_tool,
-                description="更新患者信息。",
+                description="""更新患者信息。此工具用于记录和更新患者的所有相关信息，包括：
+1. 基本信息（姓名、年龄、性别等）
+2. 就诊信息（科室、时间、主诉等）
+3. 症状和病史（症状列表、既往病史等）
+4. 体格检查（检查结果、辅助检查等）
+5. 生活习惯（吸烟史、饮酒史等）
+6. 女性特有信息（月经史等）
+7. 生育史和婚姻史
+8. 体格数据（体温、呼吸等）
+
+所有字段都是可选的，只需要提供需要更新的信息即可。""",
                 args_schema=UpdatePatientInfoInput,
                 coroutine=self.update_patient_info_tool,
                 async_callable=True,
@@ -350,8 +430,23 @@ class NurseAgentGraph:
 1. 每当患者提供任何新的信息时，必须立即调用 update_patient_info 工具进行更新
 2. 更新患者信息是最高优先级的任务，必须在其他操作之前完成
 3. 即使患者只提供了一条信息，也要立即调用 update_patient_info 工具更新
-4. 在生成病历时，必须先确保所有患者信息都已更新，再调用 generate_medical_record 工具
+4. 只有患者提出生成病历时，再调用 generate_medical_record 工具
 5. 如果发现患者信息有任何变化，必须立即调用 update_patient_info 工具更新
+
+主动采集信息指南：
+1. 首次对话时，主动询问患者的基本信息（姓名、年龄、性别等）
+2. 根据患者的主诉，主动询问相关的症状和病史
+3. 对于女性患者，适时询问月经史和生育史
+4. 询问患者的生活习惯（吸烟、饮酒等）
+5. 询问家族史和过敏史
+6. 记录体格检查结果和辅助检查结果
+7. 根据病情需要，主动询问其他相关信息
+
+历史信息使用指南：
+1. 仔细阅读历史对话，了解已经收集到的患者信息
+2. 避免重复询问已经提供过的信息
+3. 根据已有信息，有针对性地询问缺失的信息
+4. 如果发现历史信息有更新，及时调用 update_patient_info 工具更新
 
 请严格按照以上规则操作，确保患者信息的实时性和准确性。"""),
             MessagesPlaceholder(variable_name="chat_history"),
@@ -359,15 +454,18 @@ class NurseAgentGraph:
             MessagesPlaceholder(variable_name="agent_scratchpad"),
         ])
         agent = create_openai_tools_agent(self.model, tools, prompt)
-        agent_exec = AgentExecutor(agent=agent, tools=tools)
+        agent_exec = AgentExecutor(
+            agent=agent,
+            tools=tools,
+            memory=self.memory,
+            verbose=True
+        )
 
         # -------- Stream events --------
         final_response = ""
         async for ev in agent_exec.astream_events(
             {
-                "input": lc_msgs[-1].content,
-                "chat_history": lc_msgs[:-1],
-                "agent_scratchpad": [],
+                "input": lc_msgs[-1].content  # ✅ 仅此项，memory 会自动注入历史
             },
             version="v1",
         ):
